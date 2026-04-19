@@ -252,6 +252,7 @@ func addUsedChannel(c *gin.Context, channelId int) {
 	useChannel := c.GetStringSlice("use_channel")
 	useChannel = append(useChannel, fmt.Sprintf("%d", channelId))
 	c.Set("use_channel", useChannel)
+	c.Header("X-Channel-Id", fmt.Sprintf("%d", channelId))
 }
 
 func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
