@@ -1,0 +1,4 @@
+interface:
+  display_name: "New API Image Build"
+  short_description: "Build new-api Docker images on the dev server from origin/dev."
+  default_prompt: "Build a new-api Docker image on the dev server for the requested version."
