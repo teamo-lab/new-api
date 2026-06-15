@@ -29,6 +29,15 @@ type ModelRequest struct {
 	Group string `json:"group,omitempty"`
 }
 
+const channelProbeBypassHeader = "X-NewAPI-Channel-Probe-Bypass"
+
+func allowChannelProbeBypass(c *gin.Context, channel *model.Channel) bool {
+	if channel == nil || channel.Status != common.ChannelStatusAutoDisabled {
+		return false
+	}
+	return strings.TrimSpace(c.GetHeader(channelProbeBypassHeader)) == "1"
+}
+
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		var channel *model.Channel
@@ -49,7 +58,7 @@ func Distribute() func(c *gin.Context) {
 				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
 				return
 			}
-			if channel.Status != common.ChannelStatusEnabled {
+			if channel.Status != common.ChannelStatusEnabled && !allowChannelProbeBypass(c, channel) {
 				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
 				return
 			}
