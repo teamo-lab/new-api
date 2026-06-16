@@ -238,6 +238,8 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.GET("/update_balance/:id", controller.UpdateChannelBalance)
 			channelRoute.POST("/", controller.AddChannel)
 			channelRoute.PUT("/", controller.UpdateChannel)
+			channelRoute.POST("/status/:id/auto_disabled", controller.AutoDisableChannel)
+			channelRoute.POST("/status/:id/enabled", controller.EnableChannel)
 			channelRoute.DELETE("/disabled", controller.DeleteDisabledChannel)
 			channelRoute.POST("/tag/disabled", controller.DisableTagChannels)
 			channelRoute.POST("/tag/enabled", controller.EnableTagChannels)
