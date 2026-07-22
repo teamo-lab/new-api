@@ -206,7 +206,7 @@ var ChannelSpecialBases = map[string]ChannelSpecialBase{
 		OpenAIBaseURL: "https://api.kimi.com/coding/v1",
 	},
 	"doubao-coding-plan": {
-		ClaudeBaseURL: "https://ark.cn-beijing.volces.com/api/coding",
-		OpenAIBaseURL: "https://ark.cn-beijing.volces.com/api/coding/v3",
+		ClaudeBaseURL: "https://ark.cn-beijing.volces.com/api/plan",
+		OpenAIBaseURL: "https://ark.cn-beijing.volces.com/api/plan/v3",
 	},
 }
