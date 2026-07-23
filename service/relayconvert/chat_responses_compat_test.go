@@ -445,6 +445,51 @@ func TestChatCompletionsResponseToResponsesPreservesTextToolCallsAndUsage(t *tes
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(resp.Output[1].Arguments))
 }
 
+func TestChatCompletionsResponseToResponsesRestoresNamespaceToolCall(t *testing.T) {
+	toolContext := NewResponsesToChatToolContext()
+	require.NoError(t, toolContext.record("mcp_files__read", ResponsesToChatToolName{Name: "read", Namespace: "mcp_files"}))
+	chat := &dto.OpenAITextResponse{
+		Id:      "chatcmpl_1",
+		Model:   "kimi-k3",
+		Created: 456,
+		Choices: []dto.OpenAITextResponseChoice{
+			{
+				Message:      assistantMessageWithTool("", "call_1", "mcp_files__read", `{"path":"README.md"}`),
+				FinishReason: "tool_calls",
+			},
+		},
+	}
+
+	resp, _, err := ChatCompletionsResponseToResponsesResponseWithToolContext(chat, "resp_1", toolContext)
+	require.NoError(t, err)
+
+	require.Len(t, resp.Output, 1)
+	assert.Equal(t, responsesOutputTypeFunctionCall, resp.Output[0].Type)
+	assert.Equal(t, "mcp_files", resp.Output[0].Namespace)
+	assert.Equal(t, "read", resp.Output[0].Name)
+}
+
+func TestChatCompletionsResponseToResponsesPreservesUnknownDoubleUnderscoreFunctionName(t *testing.T) {
+	chat := &dto.OpenAITextResponse{
+		Id:      "chatcmpl_1",
+		Model:   "kimi-k3",
+		Created: 456,
+		Choices: []dto.OpenAITextResponseChoice{
+			{
+				Message:      assistantMessageWithTool("", "call_1", "foo__bar", `{}`),
+				FinishReason: "tool_calls",
+			},
+		},
+	}
+
+	resp, _, err := ChatCompletionsResponseToResponsesResponse(chat, "resp_1")
+	require.NoError(t, err)
+
+	require.Len(t, resp.Output, 1)
+	assert.Empty(t, resp.Output[0].Namespace)
+	assert.Equal(t, "foo__bar", resp.Output[0].Name)
+}
+
 func TestChatCompletionsResponseToResponsesMapsIncompleteFinishReasons(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -534,6 +579,49 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 	require.Len(t, events[9].Payload.Response.Output, 2)
 	assert.Equal(t, "hello", events[9].Payload.Response.Output[0].Content[0].Text)
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(events[9].Payload.Response.Output[1].Arguments))
+}
+
+func TestChatCompletionsStreamToResponsesEventsRestoresNamespaceToolCall(t *testing.T) {
+	toolContext := NewResponsesToChatToolContext()
+	require.NoError(t, toolContext.record("mcp_files__read", ResponsesToChatToolName{Name: "read", Namespace: "mcp_files"}))
+	state := NewChatToResponsesStreamStateWithToolContext("resp_1", "kimi-k3", toolContext)
+	toolIndex := 0
+
+	events := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{
+			{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{ToolCalls: []dto.ToolCallResponse{
+				{Index: &toolIndex, ID: "call_1", Type: "function", Function: dto.FunctionResponse{Name: "mcp_files__read"}},
+			}}},
+		},
+	})
+
+	require.NotEmpty(t, events)
+	var added *dto.ResponsesOutput
+	for _, event := range events {
+		if event.Type == responsesEventOutputItemAdded {
+			added = event.Payload.Item
+		}
+	}
+	require.NotNil(t, added)
+	assert.Equal(t, "mcp_files", added.Namespace)
+	assert.Equal(t, "read", added.Name)
+
+	finishReason := "tool_calls"
+	events = mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{
+			{Index: 0, FinishReason: &finishReason},
+		},
+	})
+
+	var done *dto.ResponsesOutput
+	for _, event := range events {
+		if event.Type == responsesEventOutputItemDone {
+			done = event.Payload.Item
+		}
+	}
+	require.NotNil(t, done)
+	assert.Equal(t, "mcp_files", done.Namespace)
+	assert.Equal(t, "read", done.Name)
 }
 
 func assistantMessageWithTool(content string, id string, name string, args string) dto.Message {

@@ -17,6 +17,10 @@ const (
 )
 
 func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id string) (*dto.OpenAIResponsesResponse, *dto.Usage, error) {
+	return ChatCompletionsResponseToResponsesResponseWithToolContext(resp, id, nil)
+}
+
+func ChatCompletionsResponseToResponsesResponseWithToolContext(resp *dto.OpenAITextResponse, id string, toolContext *ResponsesToChatToolContext) (*dto.OpenAIResponsesResponse, *dto.Usage, error) {
 	if resp == nil {
 		return nil, nil, errors.New("response is nil")
 	}
@@ -72,7 +76,7 @@ func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id
 	}
 
 	for i, toolCall := range choice.Message.ParseToolCalls() {
-		toolOutput, err := chatToolCallToResponsesOutput(toolCall, id, i, responseOutputStatus(out))
+		toolOutput, err := chatToolCallToResponsesOutput(toolCall, id, i, responseOutputStatus(out), toolContext)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -138,6 +142,7 @@ type ChatToResponsesStreamState struct {
 	Model   string
 	Created int64
 	Usage   *dto.Usage
+	Tools   *ResponsesToChatToolContext
 
 	status            string
 	incompleteDetails *dto.IncompleteDetails
@@ -161,6 +166,7 @@ type chatToResponsesStreamTool struct {
 	OutputIndex int
 	ID          string
 	Name        string
+	Namespace   string
 	Arguments   strings.Builder
 	Done        bool
 }
@@ -171,11 +177,16 @@ type chatToResponsesOutputRef struct {
 }
 
 func NewChatToResponsesStreamState(id string, model string) *ChatToResponsesStreamState {
+	return NewChatToResponsesStreamStateWithToolContext(id, model, nil)
+}
+
+func NewChatToResponsesStreamStateWithToolContext(id string, model string, toolContext *ResponsesToChatToolContext) *ChatToResponsesStreamState {
 	return &ChatToResponsesStreamState{
 		ID:              id,
 		Model:           model,
 		Created:         time.Now().Unix(),
 		Usage:           &dto.Usage{},
+		Tools:           toolContext,
 		status:          "completed",
 		textOutputIndex: -1,
 		reasoningIndex:  -1,
@@ -318,11 +329,13 @@ func (s *ChatToResponsesStreamState) appendToolCallDelta(toolCall dto.ToolCallRe
 	tool := s.toolsByIndex[chatIndex]
 	events := make([]ChatToResponsesStreamEvent, 0, 2)
 	if tool == nil {
+		name, namespace := responsesToolNameFromChatFunctionName(toolCall.Function.Name, s.Tools)
 		tool = &chatToResponsesStreamTool{
 			ChatIndex:   chatIndex,
 			OutputIndex: s.nextIndex("tool", chatIndex),
 			ID:          strings.TrimSpace(toolCall.ID),
-			Name:        strings.TrimSpace(toolCall.Function.Name),
+			Name:        name,
+			Namespace:   namespace,
 		}
 		if tool.ID == "" {
 			tool.ID = fmt.Sprintf("%s_call_%d", s.ID, chatIndex)
@@ -338,6 +351,7 @@ func (s *ChatToResponsesStreamState) appendToolCallDelta(toolCall dto.ToolCallRe
 				Status:    "in_progress",
 				CallId:    tool.ID,
 				Name:      tool.Name,
+				Namespace: tool.Namespace,
 				Arguments: []byte(`""`),
 			},
 		}))
@@ -346,7 +360,7 @@ func (s *ChatToResponsesStreamState) appendToolCallDelta(toolCall dto.ToolCallRe
 		tool.ID = strings.TrimSpace(toolCall.ID)
 	}
 	if strings.TrimSpace(toolCall.Function.Name) != "" {
-		tool.Name = strings.TrimSpace(toolCall.Function.Name)
+		tool.Name, tool.Namespace = responsesToolNameFromChatFunctionName(toolCall.Function.Name, s.Tools)
 	}
 	if toolCall.Function.Arguments != "" {
 		tool.Arguments.WriteString(toolCall.Function.Arguments)
@@ -531,6 +545,7 @@ func (s *ChatToResponsesStreamState) toolOutput(tool *chatToResponsesStreamTool,
 		Status:    status,
 		CallId:    tool.ID,
 		Name:      tool.Name,
+		Namespace: tool.Namespace,
 		Arguments: chatArgumentsRawMessage(tool.Arguments.String()),
 	}
 }
@@ -542,18 +557,20 @@ func responseOutputStatus(resp *dto.OpenAIResponsesResponse) string {
 	return "incomplete"
 }
 
-func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID string, index int, status string) (dto.ResponsesOutput, error) {
+func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID string, index int, status string, toolContext *ResponsesToChatToolContext) (dto.ResponsesOutput, error) {
 	callID := strings.TrimSpace(toolCall.ID)
 	if callID == "" {
 		callID = fmt.Sprintf("%s_call_%d", responseID, index)
 	}
 	if toolCall.Type == "" || toolCall.Type == "function" {
+		name, namespace := responsesToolNameFromChatFunctionName(toolCall.Function.Name, toolContext)
 		return dto.ResponsesOutput{
 			Type:      responsesOutputTypeFunctionCall,
 			ID:        callID,
 			Status:    status,
 			CallId:    callID,
-			Name:      toolCall.Function.Name,
+			Name:      name,
+			Namespace: namespace,
 			Arguments: chatArgumentsRawMessage(toolCall.Function.Arguments),
 		}, nil
 	}
@@ -564,6 +581,14 @@ func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID stri
 		CallId:    callID,
 		Arguments: toolCall.Custom,
 	}, nil
+}
+
+func responsesToolNameFromChatFunctionName(name string, toolContext *ResponsesToChatToolContext) (string, string) {
+	name = strings.TrimSpace(name)
+	if toolName, ok := toolContext.Lookup(name); ok {
+		return toolName.Name, toolName.Namespace
+	}
+	return name, ""
 }
 
 func chatArgumentsRawMessage(arguments string) []byte {

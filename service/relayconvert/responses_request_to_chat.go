@@ -1,6 +1,7 @@
 package relayconvert
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,37 +15,83 @@ const (
 	responsesInputTypeFunctionCall       = "function_call"
 	responsesInputTypeFunctionCallOutput = "function_call_output"
 	responsesInputTypeCustomToolCall     = "custom_tool_call"
+	responsesChatToolNameMaxLen          = 64
 )
 
+type ResponsesToChatToolName struct {
+	Name      string
+	Namespace string
+}
+
+type ResponsesToChatToolContext struct {
+	ChatNameToResponsesName map[string]ResponsesToChatToolName
+}
+
+func NewResponsesToChatToolContext() *ResponsesToChatToolContext {
+	return &ResponsesToChatToolContext{ChatNameToResponsesName: make(map[string]ResponsesToChatToolName)}
+}
+
+func (ctx *ResponsesToChatToolContext) record(chatName string, responsesName ResponsesToChatToolName) error {
+	if ctx == nil || chatName == "" || responsesName.Name == "" {
+		return nil
+	}
+	if existing, ok := ctx.ChatNameToResponsesName[chatName]; ok && existing != responsesName {
+		return fmt.Errorf("responses tools %q and %q both map to chat tool %q", responsesToolDisplayName(existing), responsesToolDisplayName(responsesName), chatName)
+	}
+	ctx.ChatNameToResponsesName[chatName] = responsesName
+	return nil
+}
+
+func (ctx *ResponsesToChatToolContext) Lookup(chatName string) (ResponsesToChatToolName, bool) {
+	if ctx == nil {
+		return ResponsesToChatToolName{}, false
+	}
+	name, ok := ctx.ChatNameToResponsesName[strings.TrimSpace(chatName)]
+	return name, ok
+}
+
+func responsesToolDisplayName(toolName ResponsesToChatToolName) string {
+	if toolName.Namespace == "" {
+		return toolName.Name
+	}
+	return toolName.Namespace + "." + toolName.Name
+}
+
 func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
+	out, _, err := ResponsesRequestToChatCompletionsRequestWithToolContext(req)
+	return out, err
+}
+
+func ResponsesRequestToChatCompletionsRequestWithToolContext(req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, *ResponsesToChatToolContext, error) {
 	if req == nil {
-		return nil, errors.New("request is nil")
+		return nil, nil, errors.New("request is nil")
 	}
 	if req.Model == "" {
-		return nil, errors.New("model is required")
+		return nil, nil, errors.New("model is required")
 	}
 	if err := validateResponsesRequestChatUnsupportedFields(req); err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	toolContext := NewResponsesToChatToolContext()
+
+	messages, err := responsesRequestMessagesToChat(req, toolContext)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	messages, err := responsesRequestMessagesToChat(req)
+	tools, err := responsesRequestToolsToChat(req.Tools, toolContext)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	tools, err := responsesRequestToolsToChat(req.Tools)
+	toolChoice, err := responsesRequestToolChoiceToChat(req.ToolChoice, toolContext)
 	if err != nil {
-		return nil, err
-	}
-
-	toolChoice, err := responsesRequestToolChoiceToChat(req.ToolChoice)
-	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	responseFormat, err := responsesRequestTextToChatResponseFormat(req.Text)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	out := &dto.GeneralOpenAIRequest{
@@ -86,7 +133,7 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
 		}
 	}
 
-	return out, nil
+	return out, toolContext, nil
 }
 
 func validateResponsesRequestChatUnsupportedFields(req *dto.OpenAIResponsesRequest) error {
@@ -109,7 +156,7 @@ func validateResponsesRequestChatUnsupportedFields(req *dto.OpenAIResponsesReque
 	return nil
 }
 
-func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Message, error) {
+func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest, toolContext *ResponsesToChatToolContext) ([]dto.Message, error) {
 	messages := make([]dto.Message, 0)
 	if rawJSONPresent(req.Instructions) {
 		instructions, err := responsesJSONString(req.Instructions)
@@ -139,7 +186,7 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
 			return nil, fmt.Errorf("invalid input array: %w", err)
 		}
 		for _, item := range items {
-			nextMessages, err := responsesInputItemToChatMessages(item, messages)
+			nextMessages, err := responsesInputItemToChatMessages(item, messages, toolContext)
 			if err != nil {
 				return nil, err
 			}
@@ -151,11 +198,11 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
 	}
 }
 
-func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message) ([]dto.Message, error) {
+func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message, toolContext *ResponsesToChatToolContext) ([]dto.Message, error) {
 	itemType := strings.TrimSpace(common.Interface2String(item["type"]))
 	switch itemType {
 	case responsesInputTypeFunctionCall:
-		toolCall, err := responsesFunctionCallItemToChatToolCall(item)
+		toolCall, err := responsesFunctionCallItemToChatToolCall(item, toolContext)
 		if err != nil {
 			return nil, err
 		}
@@ -262,16 +309,21 @@ func responsesContentPartsToChatContent(parts []any) (any, error) {
 	return chatParts, nil
 }
 
-func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallRequest, error) {
+func responsesFunctionCallItemToChatToolCall(item map[string]any, toolContext *ResponsesToChatToolContext) (dto.ToolCallRequest, error) {
 	name := strings.TrimSpace(common.Interface2String(item["name"]))
 	if name == "" {
 		return dto.ToolCallRequest{}, errors.New("function_call item is missing name")
+	}
+	namespace := strings.TrimSpace(common.Interface2String(item["namespace"]))
+	chatName := encodeResponsesNamespaceFunctionNameForChat(namespace, name)
+	if err := toolContext.record(chatName, ResponsesToChatToolName{Name: name, Namespace: namespace}); err != nil {
+		return dto.ToolCallRequest{}, err
 	}
 	return dto.ToolCallRequest{
 		ID:   responsesCallID(item),
 		Type: "function",
 		Function: dto.FunctionRequest{
-			Name:      name,
+			Name:      chatName,
 			Arguments: responsesArgumentsString(item["arguments"]),
 		},
 	}, nil
@@ -306,7 +358,7 @@ func appendToolCallToLastAssistant(messages []dto.Message, toolCall dto.ToolCall
 	return messages
 }
 
-func responsesRequestToolsToChat(raw json.RawMessage) ([]dto.ToolCallRequest, error) {
+func responsesRequestToolsToChat(raw json.RawMessage, toolContext *ResponsesToChatToolContext) ([]dto.ToolCallRequest, error) {
 	if !rawJSONPresent(raw) {
 		return nil, nil
 	}
@@ -320,14 +372,26 @@ func responsesRequestToolsToChat(raw json.RawMessage) ([]dto.ToolCallRequest, er
 	for _, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
 		if toolType == "function" {
+			name := strings.TrimSpace(common.Interface2String(tool["name"]))
+			if err := toolContext.record(name, ResponsesToChatToolName{Name: name}); err != nil {
+				return nil, err
+			}
 			out = append(out, dto.ToolCallRequest{
 				Type: "function",
 				Function: dto.FunctionRequest{
-					Name:        strings.TrimSpace(common.Interface2String(tool["name"])),
+					Name:        name,
 					Description: common.Interface2String(tool["description"]),
 					Parameters:  tool["parameters"],
 				},
 			})
+			continue
+		}
+		if toolType == "namespace" {
+			flattened, err := responsesNamespaceToolToChatFunctions(tool, toolContext)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, flattened...)
 			continue
 		}
 
@@ -343,7 +407,56 @@ func responsesRequestToolsToChat(raw json.RawMessage) ([]dto.ToolCallRequest, er
 	return out, nil
 }
 
-func responsesRequestToolChoiceToChat(raw json.RawMessage) (any, error) {
+func responsesNamespaceToolToChatFunctions(tool map[string]any, toolContext *ResponsesToChatToolContext) ([]dto.ToolCallRequest, error) {
+	namespace := strings.TrimSpace(common.Interface2String(tool["name"]))
+	if namespace == "" {
+		return nil, errors.New("namespace tool is missing name")
+	}
+
+	nestedTools, ok := tool["tools"].([]any)
+	if !ok {
+		if typed, ok := tool["tools"].([]map[string]any); ok {
+			nestedTools = make([]any, 0, len(typed))
+			for _, nested := range typed {
+				nestedTools = append(nestedTools, nested)
+			}
+		} else {
+			return nil, fmt.Errorf("namespace tool %q is missing tools", namespace)
+		}
+	}
+
+	out := make([]dto.ToolCallRequest, 0, len(nestedTools))
+	for _, rawNested := range nestedTools {
+		nested, ok := rawNested.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("namespace tool %q contains non-object tool", namespace)
+		}
+		if strings.TrimSpace(common.Interface2String(nested["type"])) != "function" {
+			continue
+		}
+		name := strings.TrimSpace(common.Interface2String(nested["name"]))
+		if name == "" {
+			return nil, fmt.Errorf("namespace tool %q contains function without name", namespace)
+		}
+
+		chatName := encodeResponsesNamespaceFunctionNameForChat(namespace, name)
+		if err := toolContext.record(chatName, ResponsesToChatToolName{Name: name, Namespace: namespace}); err != nil {
+			return nil, err
+		}
+		out = append(out, dto.ToolCallRequest{
+			Type: "function",
+			Function: dto.FunctionRequest{
+				Name:        chatName,
+				Description: common.Interface2String(nested["description"]),
+				Parameters:  nested["parameters"],
+			},
+		})
+	}
+
+	return out, nil
+}
+
+func responsesRequestToolChoiceToChat(raw json.RawMessage, toolContext *ResponsesToChatToolContext) (any, error) {
 	if !rawJSONPresent(raw) {
 		return nil, nil
 	}
@@ -362,15 +475,48 @@ func responsesRequestToolChoiceToChat(raw json.RawMessage) (any, error) {
 	if common.Interface2String(choice["type"]) == "function" {
 		name := strings.TrimSpace(common.Interface2String(choice["name"]))
 		if name != "" {
+			namespace := strings.TrimSpace(common.Interface2String(choice["namespace"]))
+			chatName := encodeResponsesNamespaceFunctionNameForChat(namespace, name)
+			if err := toolContext.record(chatName, ResponsesToChatToolName{Name: name, Namespace: namespace}); err != nil {
+				return nil, err
+			}
 			return map[string]any{
 				"type": "function",
 				"function": map[string]any{
-					"name": name,
+					"name": chatName,
 				},
 			}, nil
 		}
 	}
 	return choice, nil
+}
+
+func encodeResponsesNamespaceFunctionNameForChat(namespace string, name string) string {
+	namespace = strings.TrimSpace(namespace)
+	name = strings.TrimSpace(name)
+	if namespace == "" {
+		return name
+	}
+	fullName := namespace + "__" + name
+	if len(fullName) <= responsesChatToolNameMaxLen {
+		return fullName
+	}
+	digest := sha256.Sum256([]byte(fullName))
+	suffix := fmt.Sprintf("%x", digest[:])[:12]
+	availablePrefixLen := responsesChatToolNameMaxLen - len(suffix) - 2
+	prefix := fullName
+	if availablePrefixLen > 0 && len(prefix) > availablePrefixLen {
+		prefix = prefix[:availablePrefixLen]
+	}
+	return prefix + "__" + suffix
+}
+
+func encodeResponsesFunctionNameForChat(name string) string {
+	name = strings.TrimSpace(name)
+	if namespace, nested, ok := strings.Cut(name, "."); ok {
+		return encodeResponsesNamespaceFunctionNameForChat(namespace, nested)
+	}
+	return name
 }
 
 func responsesRequestTextToChatResponseFormat(raw json.RawMessage) (*dto.ResponseFormat, error) {

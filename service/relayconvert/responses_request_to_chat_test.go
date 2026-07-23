@@ -199,6 +199,114 @@ func TestResponsesRequestToChatCompletionsRequestToolsToolChoiceAndTextFormat(t 
 	assert.True(t, gjson.GetBytes(got.ResponseFormat.JsonSchema, "strict").Bool())
 }
 
+func TestResponsesRequestToChatCompletionsRequestFlattensNamespaceTools(t *testing.T) {
+	got, toolContext, err := ResponsesRequestToChatCompletionsRequestWithToolContext(&dto.OpenAIResponsesRequest{
+		Model: "kimi-k3",
+		Input: mustRawMessage(t, "hello"),
+		Tools: mustRawMessage(t, []map[string]any{
+			{
+				"type": "namespace",
+				"name": "functions",
+				"tools": []map[string]any{
+					{
+						"type":        "function",
+						"name":        "exec_command",
+						"description": "Run a shell command",
+						"parameters": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"cmd": map[string]any{"type": "string"},
+							},
+						},
+					},
+				},
+			},
+		}),
+	})
+	require.NoError(t, err)
+
+	require.Len(t, got.Tools, 1)
+	assert.Equal(t, "function", got.Tools[0].Type)
+	assert.Equal(t, "functions__exec_command", got.Tools[0].Function.Name)
+	assert.Equal(t, "Run a shell command", got.Tools[0].Function.Description)
+	assert.Equal(t, "object", got.Tools[0].Function.Parameters.(map[string]any)["type"])
+	toolName, ok := toolContext.Lookup("functions__exec_command")
+	require.True(t, ok)
+	assert.Equal(t, "functions", toolName.Namespace)
+	assert.Equal(t, "exec_command", toolName.Name)
+}
+
+func TestResponsesRequestToChatCompletionsRequestRejectsNamespaceToolNameCollision(t *testing.T) {
+	_, _, err := ResponsesRequestToChatCompletionsRequestWithToolContext(&dto.OpenAIResponsesRequest{
+		Model: "kimi-k3",
+		Tools: mustRawMessage(t, []map[string]any{
+			{"type": "function", "name": "mcp_files__read"},
+			{
+				"type": "namespace",
+				"name": "mcp_files",
+				"tools": []map[string]any{
+					{"type": "function", "name": "read"},
+				},
+			},
+		}),
+	})
+
+	require.EqualError(t, err, `responses tools "mcp_files__read" and "mcp_files.read" both map to chat tool "mcp_files__read"`)
+}
+
+func TestResponsesRequestToChatCompletionsRequestHashesLongNamespaceToolName(t *testing.T) {
+	got, toolContext, err := ResponsesRequestToChatCompletionsRequestWithToolContext(&dto.OpenAIResponsesRequest{
+		Model: "kimi-k3",
+		Tools: mustRawMessage(t, []map[string]any{
+			{
+				"type": "namespace",
+				"name": "very_long_namespace_name_that_would_overflow_chat_tool_name_limit",
+				"tools": []map[string]any{
+					{
+						"type": "function",
+						"name": "very_long_function_name_that_also_pushes_the_limit",
+					},
+				},
+			},
+		}),
+	})
+	require.NoError(t, err)
+
+	require.Len(t, got.Tools, 1)
+	chatName := got.Tools[0].Function.Name
+	assert.LessOrEqual(t, len(chatName), responsesChatToolNameMaxLen)
+	assert.Contains(t, chatName, "__")
+	toolName, ok := toolContext.Lookup(chatName)
+	require.True(t, ok)
+	assert.Equal(t, "very_long_namespace_name_that_would_overflow_chat_tool_name_limit", toolName.Namespace)
+	assert.Equal(t, "very_long_function_name_that_also_pushes_the_limit", toolName.Name)
+}
+
+func TestResponsesRequestToChatCompletionsRequestEncodesNamespacedFunctionCallReplay(t *testing.T) {
+	got, toolContext, err := ResponsesRequestToChatCompletionsRequestWithToolContext(&dto.OpenAIResponsesRequest{
+		Model: "kimi-k3",
+		Input: mustRawMessage(t, []map[string]any{
+			{
+				"type":      "function_call",
+				"call_id":   "call_1",
+				"name":      "read",
+				"namespace": "mcp_files",
+				"arguments": map[string]any{"path": "README.md"},
+			},
+		}),
+	})
+	require.NoError(t, err)
+
+	require.Len(t, got.Messages, 1)
+	toolCalls := got.Messages[0].ParseToolCalls()
+	require.Len(t, toolCalls, 1)
+	assert.Equal(t, "mcp_files__read", toolCalls[0].Function.Name)
+	toolName, ok := toolContext.Lookup("mcp_files__read")
+	require.True(t, ok)
+	assert.Equal(t, "mcp_files", toolName.Namespace)
+	assert.Equal(t, "read", toolName.Name)
+}
+
 func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
 		Model: "gpt-test",

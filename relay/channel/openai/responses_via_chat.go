@@ -17,6 +17,10 @@ import (
 )
 
 func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	return OaiChatToResponsesHandlerWithToolContext(c, info, resp, nil)
+}
+
+func OaiChatToResponsesHandlerWithToolContext(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response, toolContext *relayconvert.ResponsesToChatToolContext) (*dto.Usage, *types.NewAPIError) {
 	if resp == nil || resp.Body == nil {
 		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
@@ -36,7 +40,7 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	responseID := helper.GetResponseID(c)
-	responsesResp, usage, err := service.ChatCompletionsResponseToResponsesResponse(&chatResp, responseID)
+	responsesResp, usage, err := service.ChatCompletionsResponseToResponsesResponseWithToolContext(&chatResp, responseID, toolContext)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
@@ -56,13 +60,17 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 }
 
 func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	return OaiChatToResponsesStreamHandlerWithToolContext(c, info, resp, nil)
+}
+
+func OaiChatToResponsesStreamHandlerWithToolContext(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response, toolContext *relayconvert.ResponsesToChatToolContext) (*dto.Usage, *types.NewAPIError) {
 	if resp == nil || resp.Body == nil {
 		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
 	defer service.CloseResponseBodyGracefully(resp)
 
 	responseID := helper.GetResponseID(c)
-	state := relayconvert.NewChatToResponsesStreamState(responseID, info.UpstreamModelName)
+	state := relayconvert.NewChatToResponsesStreamStateWithToolContext(responseID, info.UpstreamModelName, toolContext)
 	streamErr := (*types.NewAPIError)(nil)
 
 	sendEvent := func(event relayconvert.ChatToResponsesStreamEvent) bool {

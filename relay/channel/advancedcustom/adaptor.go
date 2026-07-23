@@ -17,6 +17,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
@@ -25,6 +26,8 @@ import (
 const ChannelName = "advanced_custom"
 
 const advancedCustomModelPlaceholder = "{model}"
+
+const responsesToChatToolContextKey = "advanced_custom_responses_to_chat_tool_context"
 
 type Adaptor struct {
 	openaiAdaptor openai.Adaptor
@@ -108,10 +111,11 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	case dto.AdvancedCustomConverterNone:
 		return a.convertOpenAICompatibleResponsesRequest(c, info, request)
 	case dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions:
-		chatReq, err := service.ResponsesRequestToChatCompletionsRequest(&request)
+		chatReq, toolContext, err := service.ResponsesRequestToChatCompletionsRequestWithToolContext(&request)
 		if err != nil {
 			return nil, err
 		}
+		c.Set(responsesToChatToolContextKey, toolContext)
 		return a.convertOpenAICompatibleRequest(c, info, chatReq)
 	default:
 		return nil, fmt.Errorf("converter %q does not support OpenAI Responses requests", converter)
@@ -230,10 +234,12 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		}
 		return openai.OaiResponsesToChatHandler(c, info, resp)
 	case dto.AdvancedCustomConverterOpenAIResponsesToOpenAIChatCompletions:
+		toolContext, _ := c.Get(responsesToChatToolContextKey)
+		responsesToChatToolContext, _ := toolContext.(*relayconvert.ResponsesToChatToolContext)
 		if info.IsStream {
-			return openai.OaiChatToResponsesStreamHandler(c, info, resp)
+			return openai.OaiChatToResponsesStreamHandlerWithToolContext(c, info, resp, responsesToChatToolContext)
 		}
-		return openai.OaiChatToResponsesHandler(c, info, resp)
+		return openai.OaiChatToResponsesHandlerWithToolContext(c, info, resp, responsesToChatToolContext)
 	default:
 		return nil, types.NewOpenAIError(fmt.Errorf("unsupported advanced custom converter: %s", a.converter), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
