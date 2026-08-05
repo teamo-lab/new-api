@@ -144,6 +144,18 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models exposed by this channel',
     },
   },
+  59: {
+    id: 59,
+    name: CHANNEL_TYPES[59],
+    icon: 'doubao',
+    defaultBaseUrl: 'https://taitanai.cc',
+    supportedModels: ['seedance-2.0'],
+    hints: {
+      baseUrl: 'Default: https://taitanai.cc',
+      key: 'Titan AI API key',
+      models: 'seedance-2.0',
+    },
+  },
 }
 
 /**
