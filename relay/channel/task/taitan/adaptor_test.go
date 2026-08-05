@@ -222,6 +222,37 @@ func TestFetchTaskUsesTaitanEndpoint(t *testing.T) {
 	assert.Equal(t, "Bearer secret", receivedAuthorization)
 }
 
+func TestFetchTaskResolvesQueuedIDFromTaskList(t *testing.T) {
+	service.InitHttpClient()
+	const queuedID = "queued-1785896646729-72e05916-e9af-44c2-ba44-6429bd109486"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.RawQuery == "limit=100" {
+			_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"2084829681764495361","task_id":"2084829681764495361","status":"succeeded","video_url":"/media/result.mp4","cover_url":"/media/cover.jpg","created_at":"2026-08-05T02:24:06.896Z"}]}`))
+			return
+		}
+		assert.Equal(t, SubmitEndpoint+"/"+queuedID, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":{"code":"task_not_found"}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	resp, err := (&TaskAdaptor{}).FetchTask(server.URL, "secret", map[string]any{"task_id": queuedID}, "")
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	t.Cleanup(func() { require.NoError(t, resp.Body.Close()) })
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	responseBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	var result responsePayload
+	require.NoError(t, common.Unmarshal(responseBody, &result))
+	assert.Equal(t, "2084829681764495361", result.TaskID)
+	assert.Equal(t, "succeeded", result.Status)
+	assert.Equal(t, server.URL+"/media/result.mp4", result.VideoURL)
+	assert.Equal(t, server.URL+"/media/cover.jpg", result.CoverURL)
+}
+
 func TestConvertToOpenAIVideoIncludesResultMetadata(t *testing.T) {
 	task := &model.Task{
 		TaskID:    "task_public",

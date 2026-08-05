@@ -30,14 +30,19 @@ import (
 )
 
 type responsePayload struct {
-	Object   string          `json:"object"`
-	ID       string          `json:"id"`
-	TaskID   string          `json:"task_id"`
-	Model    string          `json:"model"`
-	Status   string          `json:"status"`
-	VideoURL string          `json:"video_url"`
-	CoverURL string          `json:"cover_url"`
-	Error    json.RawMessage `json:"error"`
+	Object    string          `json:"object"`
+	ID        string          `json:"id"`
+	TaskID    string          `json:"task_id"`
+	Model     string          `json:"model"`
+	Status    string          `json:"status"`
+	VideoURL  string          `json:"video_url"`
+	CoverURL  string          `json:"cover_url"`
+	CreatedAt string          `json:"created_at"`
+	Error     json.RawMessage `json:"error"`
+}
+
+type taskListPayload struct {
+	Data []responsePayload `json:"data"`
 }
 
 type TaskAdaptor struct {
@@ -237,7 +242,114 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
-	return client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusNotFound || !strings.HasPrefix(taskID, "queued-") {
+		return normalizeTaskResponse(resp, baseURL)
+	}
+
+	notFoundBody, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(notFoundBody))
+
+	queuedTimestamp := strings.SplitN(strings.TrimPrefix(taskID, "queued-"), "-", 2)[0]
+	queuedMilliseconds, err := strconv.ParseInt(queuedTimestamp, 10, 64)
+	if err != nil {
+		return resp, nil
+	}
+	queuedAt := time.UnixMilli(queuedMilliseconds)
+
+	listURL := strings.TrimRight(baseURL, "/") + SubmitEndpoint + "?limit=100"
+	listReq, err := http.NewRequest(http.MethodGet, listURL, nil)
+	if err != nil {
+		return resp, nil
+	}
+	listReq.Header.Set("Accept", "application/json")
+	listReq.Header.Set("Authorization", "Bearer "+key)
+	listResp, err := client.Do(listReq)
+	if err != nil {
+		return resp, nil
+	}
+	defer listResp.Body.Close()
+	if listResp.StatusCode != http.StatusOK {
+		return resp, nil
+	}
+	listBody, err := io.ReadAll(listResp.Body)
+	if err != nil {
+		return resp, nil
+	}
+	var tasks taskListPayload
+	if common.Unmarshal(listBody, &tasks) != nil {
+		return resp, nil
+	}
+
+	bestIndex := -1
+	bestDelta := 2 * time.Second
+	for i := range tasks.Data {
+		createdAt, parseErr := time.Parse(time.RFC3339Nano, tasks.Data[i].CreatedAt)
+		if parseErr != nil {
+			continue
+		}
+		delta := createdAt.Sub(queuedAt)
+		if delta < 0 {
+			delta = -delta
+		}
+		if delta <= bestDelta {
+			bestIndex = i
+			bestDelta = delta
+		}
+	}
+	if bestIndex < 0 {
+		return resp, nil
+	}
+
+	matched := tasks.Data[bestIndex]
+	matched.VideoURL = absoluteMediaURL(baseURL, matched.VideoURL)
+	matched.CoverURL = absoluteMediaURL(baseURL, matched.CoverURL)
+	matchedBody, err := common.Marshal(matched)
+	if err != nil {
+		return resp, nil
+	}
+	return &http.Response{
+		StatusCode:    http.StatusOK,
+		Status:        http.StatusText(http.StatusOK),
+		Header:        listResp.Header.Clone(),
+		Body:          io.NopCloser(bytes.NewReader(matchedBody)),
+		ContentLength: int64(len(matchedBody)),
+		Request:       listReq,
+	}, nil
+}
+
+func normalizeTaskResponse(resp *http.Response, baseURL string) (*http.Response, error) {
+	responseBody, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	var task responsePayload
+	if common.Unmarshal(responseBody, &task) == nil {
+		task.VideoURL = absoluteMediaURL(baseURL, task.VideoURL)
+		task.CoverURL = absoluteMediaURL(baseURL, task.CoverURL)
+		if normalizedBody, marshalErr := common.Marshal(task); marshalErr == nil {
+			responseBody = normalizedBody
+		}
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(responseBody))
+	resp.ContentLength = int64(len(responseBody))
+	return resp, nil
+}
+
+func absoluteMediaURL(baseURL, mediaURL string) string {
+	if !strings.HasPrefix(mediaURL, "/") {
+		return mediaURL
+	}
+	return strings.TrimRight(baseURL, "/") + mediaURL
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
