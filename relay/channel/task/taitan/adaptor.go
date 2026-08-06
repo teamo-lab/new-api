@@ -309,20 +309,26 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	}
 
 	matched := tasks.Data[bestIndex]
-	matched.VideoURL = absoluteMediaURL(baseURL, matched.VideoURL)
-	matched.CoverURL = absoluteMediaURL(baseURL, matched.CoverURL)
-	matchedBody, err := common.Marshal(matched)
-	if err != nil {
+	resolvedTaskID := matched.ID
+	if resolvedTaskID == "" {
+		resolvedTaskID = matched.TaskID
+	}
+	if resolvedTaskID == "" {
 		return resp, nil
 	}
-	return &http.Response{
-		StatusCode:    http.StatusOK,
-		Status:        http.StatusText(http.StatusOK),
-		Header:        listResp.Header.Clone(),
-		Body:          io.NopCloser(bytes.NewReader(matchedBody)),
-		ContentLength: int64(len(matchedBody)),
-		Request:       listReq,
-	}, nil
+
+	detailURL := strings.TrimRight(baseURL, "/") + SubmitEndpoint + "/" + url.PathEscape(resolvedTaskID)
+	detailReq, err := http.NewRequest(http.MethodGet, detailURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	detailReq.Header.Set("Accept", "application/json")
+	detailReq.Header.Set("Authorization", "Bearer "+key)
+	detailResp, err := client.Do(detailReq)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeTaskResponse(detailResp, baseURL)
 }
 
 func normalizeTaskResponse(resp *http.Response, baseURL string) (*http.Response, error) {
@@ -367,6 +373,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		result.Status = model.TaskStatusInProgress
 		result.Progress = taskcommon.ProgressInProgress
 	case "succeeded", "success", "completed":
+		if strings.TrimSpace(upstream.VideoURL) == "" {
+			return nil, errors.New("completed taitan task is missing video_url")
+		}
 		result.Status = model.TaskStatusSuccess
 		result.Progress = taskcommon.ProgressComplete
 		result.Url = upstream.VideoURL

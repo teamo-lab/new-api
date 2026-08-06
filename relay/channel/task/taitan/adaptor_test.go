@@ -225,10 +225,17 @@ func TestFetchTaskUsesTaitanEndpoint(t *testing.T) {
 func TestFetchTaskResolvesQueuedIDFromTaskList(t *testing.T) {
 	service.InitHttpClient()
 	const queuedID = "queued-1785896646729-72e05916-e9af-44c2-ba44-6429bd109486"
+	var receivedPaths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPaths = append(receivedPaths, r.URL.RequestURI())
+		assert.Equal(t, "Bearer secret", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.RawQuery == "limit=100" {
-			_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"2084829681764495361","task_id":"2084829681764495361","status":"succeeded","video_url":"/media/result.mp4","cover_url":"/media/cover.jpg","created_at":"2026-08-05T02:24:06.896Z"}]}`))
+			_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"2084829681764495361","task_id":"2084829681764495361","status":"succeeded","created_at":"2026-08-05T02:24:06.896Z"}]}`))
+			return
+		}
+		if r.URL.Path == SubmitEndpoint+"/2084829681764495361" {
+			_, _ = w.Write([]byte(`{"id":"2084829681764495361","task_id":"2084829681764495361","status":"succeeded","video_url":"/media/result.mp4","cover_url":"/media/cover.jpg"}`))
 			return
 		}
 		assert.Equal(t, SubmitEndpoint+"/"+queuedID, r.URL.Path)
@@ -251,6 +258,18 @@ func TestFetchTaskResolvesQueuedIDFromTaskList(t *testing.T) {
 	assert.Equal(t, "succeeded", result.Status)
 	assert.Equal(t, server.URL+"/media/result.mp4", result.VideoURL)
 	assert.Equal(t, server.URL+"/media/cover.jpg", result.CoverURL)
+	assert.Equal(t, []string{
+		SubmitEndpoint + "/" + queuedID,
+		SubmitEndpoint + "?limit=100",
+		SubmitEndpoint + "/2084829681764495361",
+	}, receivedPaths)
+}
+
+func TestParseTaskResultRejectsCompletedTaskWithoutVideoURL(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{"status":"succeeded"}`))
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "missing video_url")
 }
 
 func TestConvertToOpenAIVideoIncludesResultMetadata(t *testing.T) {
