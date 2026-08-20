@@ -22,7 +22,7 @@ func UpdateChannelStatusDirect(channelId int, status int, reason string) (*Chann
 	channel.SetOtherInfo(info)
 	channel.Status = status
 
-	if err := channel.SaveWithoutKey(); err != nil {
+	if err := channel.saveStatusState(); err != nil {
 		return nil, err
 	}
 	if err := UpdateAbilityStatus(channelId, status == common.ChannelStatusEnabled); err != nil {
