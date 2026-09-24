@@ -504,21 +504,17 @@ function BatchChannelModelTestDialog({
                   </span>
                 )}
               </div>
-              {result && result.status !== 'testing' ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!model.trim() || isUpdating}
-                  onClick={() => void changeModel(channel, !hasModel)}
-                >
-                  {isUpdating && (
-                    <Loader2 className="mr-1 size-3 animate-spin" />
-                  )}
-                  {hasModel ? t('Remove') : t('Add')}
-                </Button>
-              ) : (
-                <div className="w-[4.5rem]" aria-hidden="true" />
-              )}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!model.trim() || isUpdating}
+                onClick={() => void changeModel(channel, !hasModel)}
+              >
+                {isUpdating && (
+                  <Loader2 className="mr-1 size-3 animate-spin" />
+                )}
+                {hasModel ? t('Remove') : t('Add')}
+              </Button>
             </div>
           )
         })}
