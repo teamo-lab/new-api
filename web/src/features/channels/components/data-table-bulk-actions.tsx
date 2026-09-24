@@ -438,6 +438,7 @@ function BatchChannelModelTestDialog({
       }}
       title={t('Test model on selected channels')}
       description={t('Enter a model ID to test all selected channels.')}
+      contentClassName="sm:max-w-4xl"
       contentHeight="auto"
       bodyClassName="space-y-4"
       footer={
@@ -473,15 +474,15 @@ function BatchChannelModelTestDialog({
           return (
             <div
               key={channel.id}
-              className="flex items-center gap-3 border-b p-3 last:border-b-0"
+              className="grid grid-cols-[minmax(180px,0.8fr)_minmax(0,1fr)_auto] items-center gap-3 border-b p-3 last:border-b-0"
             >
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0">
                 <div className="truncate font-medium">{channel.name}</div>
                 <div className="text-muted-foreground text-xs">
                   #{channel.id}
                 </div>
               </div>
-              <div className="w-36 text-sm">
+              <div className="min-w-0 text-sm">
                 {result?.status === 'testing' && t('Testing...')}
                 {result?.status === 'success' && (
                   <span className="text-green-600">
@@ -490,7 +491,10 @@ function BatchChannelModelTestDialog({
                   </span>
                 )}
                 {result?.status === 'error' && (
-                  <span className="text-destructive" title={result.message}>
+                  <span
+                    className="text-destructive block truncate"
+                    title={result.message}
+                  >
                     {result.message || t('Failed')}
                   </span>
                 )}
@@ -500,15 +504,21 @@ function BatchChannelModelTestDialog({
                   </span>
                 )}
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!model.trim() || isUpdating}
-                onClick={() => void changeModel(channel, !hasModel)}
-              >
-                {isUpdating && <Loader2 className="mr-1 size-3 animate-spin" />}
-                {hasModel ? t('Remove') : t('Add')}
-              </Button>
+              {result && result.status !== 'testing' ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!model.trim() || isUpdating}
+                  onClick={() => void changeModel(channel, !hasModel)}
+                >
+                  {isUpdating && (
+                    <Loader2 className="mr-1 size-3 animate-spin" />
+                  )}
+                  {hasModel ? t('Remove') : t('Add')}
+                </Button>
+              ) : (
+                <div className="w-[4.5rem]" aria-hidden="true" />
+              )}
             </div>
           )
         })}
