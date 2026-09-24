@@ -9,7 +9,9 @@ This skill updates one node at a time behind Tencent CLB. It removes a node from
 the selected region's CLB listener, waits for existing connections to drain,
 updates `/home/work/new-api`'s `new-api` container, checks
 `http://127.0.0.1:3000/api/status` and the Docker health state, then registers the
-node again before moving to the next node.
+node again before moving to the next node. CLB mutations are asynchronous; the
+script polls `DescribeTaskStatus` and does not continue until each mutation
+reports success.
 
 ## Mandatory region confirmation
 

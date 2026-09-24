@@ -25,6 +25,7 @@ CLB_LOCATION_ID=${CLB_LOCATION_ID:-}
 CLB_TARGET_PORT=${CLB_TARGET_PORT:-3000}
 DRAIN_SECONDS=${DRAIN_SECONDS:-15}
 HEALTH_TIMEOUT_SECONDS=${HEALTH_TIMEOUT_SECONDS:-180}
+CLB_TASK_TIMEOUT_SECONDS=${CLB_TASK_TIMEOUT_SECONDS:-120}
 DRY_RUN=${DRY_RUN:-0}
 
 # Each entry is SSH_TARGET,ENI_IP. The ENI_IP is the private IP registered in CLB.
@@ -62,14 +63,46 @@ target_json() {
 }
 
 clb_target() {
-  local action=$1 eni_ip=$2 json
+  local action=$1 eni_ip=$2 json response request_id status deadline
   json=$(target_json "$eni_ip")
   log "CLB $action $eni_ip:$CLB_TARGET_PORT"
-  run tccli clb "$action" \
+  if (( DRY_RUN )); then
+    run tccli clb "$action" \
+      --region "$CLB_REGION" \
+      --LoadBalancerId "$CLB_ID" \
+      --ListenerId "$CLB_LISTENER_ID" \
+      --Targets "$json"
+    return 0
+  fi
+
+  if ! response=$(tccli clb "$action" \
     --region "$CLB_REGION" \
     --LoadBalancerId "$CLB_ID" \
     --ListenerId "$CLB_LISTENER_ID" \
-    --Targets "$json"
+    --Targets "$json" 2>&1); then
+    printf '%s\n' "$response" >&2
+    return 1
+  fi
+
+  request_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["Response"]["RequestId"])' <<<"$response") || {
+    printf 'Unable to read CLB RequestId from response: %s\n' "$response" >&2
+    return 1
+  }
+  deadline=$((SECONDS + CLB_TASK_TIMEOUT_SECONDS))
+  while (( SECONDS < deadline )); do
+    status=$(tccli clb DescribeTaskStatus \
+      --region "$CLB_REGION" \
+      --TaskId "$request_id" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["Response"].get("Status", ""))')
+    case "$status" in
+      0) return 0 ;;
+      1) echo "CLB task failed: $request_id" >&2; return 1 ;;
+      2) sleep 2 ;;
+      *) echo "Unknown CLB task status '$status' for $request_id" >&2; return 1 ;;
+    esac
+  done
+  echo "Timed out waiting for CLB task: $request_id" >&2
+  return 1
 }
 
 wait_remote_health() {
