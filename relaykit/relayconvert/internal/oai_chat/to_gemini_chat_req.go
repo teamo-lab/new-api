@@ -58,6 +58,13 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 		}
 
 		if googleBody, ok := extraBody["google"].(map[string]interface{}); ok {
+			// Preserve an explicit Gemini/Vertex context cache handle supplied
+			// through the OpenAI-compatible extra_body envelope.
+			if cachedContent, ok := googleBody["cached_content"].(string); ok && strings.TrimSpace(cachedContent) != "" {
+				geminiRequest.CachedContent = strings.TrimSpace(cachedContent)
+			} else if cachedContent, ok := googleBody["cachedContent"].(string); ok && strings.TrimSpace(cachedContent) != "" {
+				geminiRequest.CachedContent = strings.TrimSpace(cachedContent)
+			}
 			if !strings.HasSuffix(upstreamModelName, "-nothinking") {
 				adaptorWithExtraBody = true
 				if _, hasErrorParam := googleBody["thinkingConfig"]; hasErrorParam {
