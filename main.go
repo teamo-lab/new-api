@@ -293,6 +293,9 @@ func InitResources() error {
 
 	// 加载环境变量
 	common.InitEnv()
+	if err := common.InitTencentCloudSecrets(); err != nil {
+		return fmt.Errorf("failed to initialize Tencent Cloud SSM secrets: %w", err)
+	}
 
 	logger.SetupLogger()
 

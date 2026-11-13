@@ -26,7 +26,14 @@ services:
       - ./data:/data
       - ./logs:/app/logs
     environment:
-      - SQL_DSN=postgresql://root:123456@postgres:5432/new-api # ⚠️ IMPORTANT: Change the password in production!
+      # Production: set TENCENTCLOUD_SSM_ENABLED=true and remove plaintext DSNs.
+      - TENCENTCLOUD_SSM_ENABLED=${TENCENTCLOUD_SSM_ENABLED:-false}
+      - TENCENTCLOUD_SSM_REGION=${TENCENTCLOUD_SSM_REGION:-ap-guangzhou}
+      - TENCENTCLOUD_SSM_SQL_DSN_SECRET=${TENCENTCLOUD_SSM_SQL_DSN_SECRET:-}
+      - TENCENTCLOUD_SSM_LOG_SQL_DSN_SECRET=${TENCENTCLOUD_SSM_LOG_SQL_DSN_SECRET:-}
+      - TENCENTCLOUD_SSM_REDIS_SECRET=${TENCENTCLOUD_SSM_REDIS_SECRET:-}
+      # Local development fallback only. Set SQL_DSN outside this file when SSM is disabled.
+      # - SQL_DSN=postgresql://root:change-me@postgres:5432/new-api
 #      - SQL_DSN=root:123456@tcp(mysql:3306)/new-api  # Point to the mysql service, uncomment if using MySQL
 #      - LOG_SQL_DSN=postgresql://root:123456@postgres:5432/new-api-log # OPTIONAL: If you want a separate database for logging, uncomment and set this
 #      - LOG_SQL_DSN=clickhouse://default:123456@clickhouse:9000/new_api_logs # OPTIONAL: Use ClickHouse for logs only; also uncomment clickhouse in depends_on and the clickhouse service below
@@ -79,7 +86,7 @@ services:
     restart: always
     environment:
       POSTGRES_USER: root
-      POSTGRES_PASSWORD: 123456  # ⚠️ IMPORTANT: Change this password in production!
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD for the local PostgreSQL container}
       POSTGRES_DB: new-api
     volumes:
       - pg_data:/var/lib/postgresql/data

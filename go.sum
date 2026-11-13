@@ -1942,6 +1942,10 @@ github.com/tchap/go-patricia v2.2.6+incompatible/go.mod h1:bmLyhP68RS6kStMGxByiQ
 github.com/tchap/go-patricia/v2 v2.3.1/go.mod h1:VZRHKAb53DLaG+nA9EaYYiaEx6YztwDlLElMsnSHD4k=
 github.com/tcolgate/mp3 v0.0.0-20170426193717-e79c5a46d300 h1:XQdibLKagjdevRB6vAjVY4qbSr8rQ610YzTkWcxzxSI=
 github.com/tcolgate/mp3 v0.0.0-20170426193717-e79c5a46d300/go.mod h1:FNa/dfN95vAYCNFrIKRrlRo+MBLbwmR9Asa5f2ljmBI=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.199 h1:2dchZ8q0z4x8TIWPLQg3UHn/o+uOtCOq2viFuyRG31E=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.199/go.mod h1:r5r4xbfxSaeR04b166HGsBa/R4U3SueirEUpXGuw+Q0=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/ssm v1.3.199 h1:RNtug7m7SrwCcc+F9dc4NOjq5STkikEW4+uoft3u0hM=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/ssm v1.3.199/go.mod h1:BOSb0Ymm1ORZiuOE9HEksYkYq1e4nsG2aZpxIoU8ANE=
 github.com/testcontainers/testcontainers-go v0.25.0/go.mod h1:4sC9SiJyzD1XFi59q8umTQYWxnkweEc5OjVtTUlJzqQ=
 github.com/thanhpk/randstr v1.0.6 h1:psAOktJFD4vV9NEVb3qkhRSMvYh4ORRaj1+w/hn4B+o=
 github.com/thanhpk/randstr v1.0.6/go.mod h1:M/H2P1eNLZzlDwAzpkkkUvoyNNMbzRGhESZuEQk3r0U=
