@@ -41,6 +41,24 @@ func InitTencentCloudSecrets() error {
 		{"LOG_SQL_DSN", os.Getenv("TENCENTCLOUD_SSM_LOG_SQL_DSN_SECRET")},
 		{"REDIS_CONN_STRING", os.Getenv("TENCENTCLOUD_SSM_REDIS_SECRET")},
 	}
+	if bundleName := strings.TrimSpace(os.Getenv("TENCENTCLOUD_SSM_BUNDLE_SECRET")); bundleName != "" {
+		bundle, err := getTencentSecret(client, bundleName)
+		if err != nil {
+			return fmt.Errorf("load Tencent Cloud secret %q: %w", bundleName, err)
+		}
+		values := map[string]string{}
+		if err := Unmarshal([]byte(bundle), &values); err != nil {
+			return fmt.Errorf("parse Tencent Cloud secret %q as JSON bundle: %w", bundleName, err)
+		}
+		for envName, value := range values {
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("Tencent Cloud secret %q contains an empty value for %s", bundleName, envName)
+			}
+			if err := os.Setenv(envName, value); err != nil {
+				return fmt.Errorf("set %s from Tencent Cloud SSM: %w", envName, err)
+			}
+		}
+	}
 	for _, item := range secrets {
 		if strings.TrimSpace(item.secretName) == "" {
 			continue
