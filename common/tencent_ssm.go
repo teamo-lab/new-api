@@ -19,7 +19,10 @@ func InitTencentCloudSecrets() error {
 		return nil
 	}
 
-	region := strings.TrimSpace(os.Getenv("TENCENTCLOUD_SSM_REGION"))
+	region := strings.TrimSpace(os.Getenv("TENCENTCLOUD_REGION"))
+	if region == "" {
+		region = strings.TrimSpace(os.Getenv("TENCENTCLOUD_SSM_REGION"))
+	}
 	if region == "" {
 		return fmt.Errorf("TENCENTCLOUD_SSM_REGION is required when TENCENTCLOUD_SSM_ENABLED=true")
 	}
